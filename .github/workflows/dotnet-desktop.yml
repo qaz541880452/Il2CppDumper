@@ -1,0 +1,115 @@
+#此工作流使用未经GitHub认证的操作。
+#它们由第三方提供，并由
+#单独的服务条款、隐私政策和支持
+#文档。
+
+#此工作流将构建、测试、签名和打包WPF或Windows窗体桌面应用程序
+#构建在. NET核心之上。
+#要了解如何将现有应用程序迁移到. NET Core，
+#参考https://docs.microsoft.com/en-us/dotnet/desktop-wpf/migration/convert-project-from-net-framework
+#
+#配置此工作流：
+#
+#1。配置环境变量
+#GitHub为每个工作流运行设置默认环境变量。
+#替换下面“env”部分中与项目相关的变量。
+#
+# 2. Signing
+#在Windows应用程序中生成签名证书
+#打包项目或向项目添加现有签名证书。
+#接下来，使用PowerShell使用Base64编码对. pfx文件进行编码
+#通过运行以下Powershell脚本生成输出字符串：
+#
+# $pfx_cert = Get-Content '.\SigningCertificate.pfx' -Encoding Byte
+#[System.Convert]：：ToBase64String（$pfx_Cert）|Out-文件'SigningCertificate_Encoded.txt'
+#
+#打开输出文件SigningCertificate_Encoded.txt，并复制
+#弦在里面。然后，将字符串作为GitHub secret添加到回购
+#并将其命名为“Base64_Encoded_Pfx”
+#有关如何为
+#此工作流程，请参阅https://github.com/microsoft/github-actions-for-desktop-apps#签名
+#
+#最后，将签名证书密码作为秘密添加到回购中，并将其命名为“Pfx_Key”。
+#请参阅下面的“构建Windows应用程序打包项目”，了解如何使用这个秘密。
+#
+#有关GitHub操作的更多信息，请参阅https://GitHub.com/features/Actions
+#要获得完整的CI/CD示例，以便开始使用桌面应用程序的GitHub Action工作流，
+#参考https://github.com/microsoft/github-actions-for-desktop-apps
+
+名字: . NET核心桌面
+
+在:
+推:
+分支: [ "master" ]
+query为空pull_request:
+分支: [ "master" ]
+
+工作:
+
+建筑:
+
+战略:
+矩阵:
+配置: [调试,释放]
+
+    runs-on: windows-latest  #有关可用轮道类型的列表，请参阅
+                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
+
+env:
+      Solution_Name: your-solution-name                         #用解决方案名替换，即MyWpfApp. sln。
+      Test_Project_Path: your-test-project-path                 #替换为测试项目的路径，即MyWpfApp. Tests\MyWpfApp. Tests. csproj。
+      Wap_Project_Directory: your-wap-project-directory-name    #替换为相对于解决方案的Wap项目目录，即MyWpfApp. Package。
+      Wap_Project_Path: your-wap-project-path                   #替换为Wap项目的路径，即MyWpf. App. Package\MyWpfApp. Package. wapproj。
+
+步骤:
+    - 名字: 付款台
+用途: actions/checkout@v4
+与:
+        fetch-depth: 0
+
+    #安装. NET核心工作负载
+    - 名字: 安装. NET核心
+用途: actions/setup-dotnet@v4
+与:
+        dotnet-version: 8.0.x
+
+    #将MSBuild添加到路径：https://github.com/microsoft/setup-MSBuild
+    - 名字: 安装MSBuild.exe
+用途: microsoft/setup-msbuild@v2
+
+    #在解决方案中执行所有单元测试
+    - 名字: 执行单元测试
+跑: dotnet测试
+
+    #还原应用程序，用runtimetidentifiers填充obj文件夹
+    - 名字: 还原应用程序
+跑: msbuild $env:Solution_Name /t:恢复/p:配置=$env:配置
+env:
+配置: ${{ matrix.configuration }}
+
+    #解码base 64编码的pfx并保存signature_Certificate
+    - 名字: 解码pfx
+跑: |
+$pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
+$certificatePath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
+[IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
+
+    #通过构建和打包Windows应用程序打包项目创建应用程序包
+    - 名字: 创建应用软件包
+跑: msbuild $env:Wap_Project_Path /p:配置=$env:配置/p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
+env:
+        Appx_Bundle: 总是
+        Appx_Bundle_Platforms: x86|x64
+        Appx_Package_Build_Mode: StoreUpload
+        Configuration: ${{ matrix.configuration }}
+
+    # Remove the pfx
+    - name: Remove the pfx
+      run: Remove-Item -path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
+
+    # Upload the MSIX package: https://github.com/marketplace/actions/upload-a-build-artifact
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: MSIX Package
+        path: ${{ env.Wap_Project_Directory }}\AppPackages
